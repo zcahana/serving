@@ -21,6 +21,7 @@ package performance
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -51,9 +52,11 @@ type stats struct {
 	avg time.Duration
 	min time.Duration
 	max time.Duration
+
+	num int
 }
 
-func runScaleFromZero(idx int, t *testing.T, clients *test.Clients, ro *test.ResourceObjects) (time.Duration, error) {
+func runScaleFromZero(idx int, t *testing.T, clients *test.Clients, ro *test.ResourceObjects) (time.Duration, []*zipkin.Span, error) {
 	t.Helper()
 	deploymentName := names.Deployment(ro.Revision)
 
@@ -62,7 +65,7 @@ func runScaleFromZero(idx int, t *testing.T, clients *test.Clients, ro *test.Res
 	if err := e2e.WaitForScaleToZero(t, deploymentName, clients); err != nil {
 		m := fmt.Sprintf("%02d: failed waiting for deployment to scale to zero: %v", idx, err)
 		t.Log(m)
-		return 0, errors.New(m)
+		return 0, nil, errors.New(m)
 	}
 
 	start := time.Now()
@@ -77,25 +80,27 @@ func runScaleFromZero(idx int, t *testing.T, clients *test.Clients, ro *test.Res
 	if err != nil {
 		m := fmt.Sprintf("%02d: the endpoint for Route %q at domain %q didn't serve the expected text %q: %v", idx, ro.Route.Name, domain, helloWorldExpectedOutput, err)
 		t.Log(m)
-		return 0, errors.New(m)
+		return 0, nil, errors.New(m)
 	}
 	dur := time.Since(start)
 	t.Logf("%02d: request completed", idx)
 
 	traceID := resp.Header.Get(zipkin.ZipkinTraceIDHeader)
 	AddTrace(t.Logf, t.Name(), traceID)
+	spans, err := GetTrace(traceID)
 
-	return dur, nil
+	return dur, spans, err
 }
 
-func parallelScaleFromZero(t *testing.T, count int) ([]time.Duration, error) {
+func parallelScaleFromZero(t *testing.T, count int) ([]time.Duration, [][]*zipkin.Span, error) {
 	pc, err := Setup(t, EnableZipkinTracing)
 	if err != nil {
-		return nil, fmt.Errorf("failed to setup clients: %v", err)
+		return nil, nil, fmt.Errorf("failed to setup clients: %v", err)
 	}
 
 	testNames := make([]*test.ResourceNames, count)
 	durations := make([]time.Duration, count)
+	traces := make([][]*zipkin.Span, count)
 
 	// Initialize our service names.
 	for i := 0; i < count; i++ {
@@ -146,21 +151,22 @@ func parallelScaleFromZero(t *testing.T, count int) ([]time.Duration, error) {
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	t.Logf("Created all the services in %v", time.Since(begin))
 	for i := 0; i < count; i++ {
 		ndx := i
 		g.Go(func() error {
-			dur, err := runScaleFromZero(ndx, t, pc.E2EClients, objs[ndx])
+			dur, spans, err := runScaleFromZero(ndx, t, pc.E2EClients, objs[ndx])
 			t.Logf("%02d: duration: %v, err: %v", ndx, dur, err)
 			if err == nil {
 				durations[ndx] = dur
+				traces[ndx] = spans
 			}
 			return err
 		})
 	}
-	return durations, g.Wait()
+	return durations, traces, g.Wait()
 }
 
 func getRunStats(durations []time.Duration) *stats {
@@ -183,13 +189,57 @@ func getRunStats(durations []time.Duration) *stats {
 		avg: time.Duration(int64(avg) / int64(len(durations))),
 		min: min,
 		max: max,
+		num: len(durations),
 	}
+}
+
+func getMultiRunTraceStats(runTraces [][][]*zipkin.Span) map[string]*stats {
+	containerStats := make(map[string]*stats)
+
+	for _, traces := range runTraces {
+		for _, trace := range traces {
+			for _, span := range trace {
+				if strings.HasPrefix(span.Name, "container_startup") {
+					name := strings.TrimPrefix(span.Name, "container_startup-")
+					dur := time.Duration(span.Duration) * time.Microsecond
+
+					cStats := containerStats[name]
+					if cStats == nil {
+						cStats = &stats{
+							min: dur,
+							max: dur,
+							avg: dur,
+							num: 1,
+						}
+
+						containerStats[name] = cStats
+					} else {
+						if dur < cStats.min {
+							cStats.min = dur
+						}
+						if dur > cStats.max {
+							cStats.max = dur
+						}
+						cStats.avg += dur
+						cStats.num += 1
+					}
+				}
+			}
+		}
+	}
+
+	for _, cStats := range containerStats {
+		cStats.avg = time.Duration(int(cStats.avg) / cStats.num)
+	}
+
+	return containerStats
 }
 
 func getMultiRunStats(runStats []*stats) *stats {
 	min := runStats[0].min
 	max := runStats[0].max
 	avg := runStats[0].avg
+	num := 0
 
 	for _, stat := range runStats[1:] {
 		if stat.min < min {
@@ -198,32 +248,47 @@ func getMultiRunStats(runStats []*stats) *stats {
 			max = stat.max
 		}
 		avg += stat.avg
+		num += stat.num
 	}
 	return &stats{
 		avg: time.Duration(int64(avg) / int64(len(runStats))),
 		min: min,
 		max: max,
+		num: num,
 	}
 }
 
 func testScaleFromZero(t *testing.T, count, numRuns int) {
 	runStats := make([]*stats, numRuns)
+	runTraces := make([][][]*zipkin.Span, numRuns)
+
 	tName := fmt.Sprintf("TestScaleFromZero%02d", count)
 	for i := 0; i < numRuns; i++ {
-		durs, err := parallelScaleFromZero(t, count)
+		durs, traces, err := parallelScaleFromZero(t, count)
 		if err != nil {
 			t.Fatalf("Run %d: %v", i+1, err)
 		}
 		runStats[i] = getRunStats(durs)
+		runTraces[i] = traces
 		t.Logf("Run %d: Average: %v", i+1, runStats[i].avg)
 	}
 
 	stats := getMultiRunStats(runStats)
+	containerStats := getMultiRunTraceStats(runTraces)
 
-	if err := testgrid.CreateXMLOutput([]junit.TestCase{
+	testCases := []junit.TestCase{
 		CreatePerfTestCase(float32(stats.avg.Seconds()), "Average", tName),
 		CreatePerfTestCase(float32(stats.min.Seconds()), "Min", tName),
-		CreatePerfTestCase(float32(stats.max.Seconds()), "Max", tName)}, tName); err != nil {
+		CreatePerfTestCase(float32(stats.max.Seconds()), "Max", tName),
+		CreatePerfTestCase(float32(stats.num), "Num", tName)}
+
+	for container, stats := range containerStats {
+		testCases = append(testCases, CreatePerfTestCase(float32(stats.avg.Seconds()), container+"-Average", tName))
+		testCases = append(testCases, CreatePerfTestCase(float32(stats.min.Seconds()), container+"-Min", tName))
+		testCases = append(testCases, CreatePerfTestCase(float32(stats.max.Seconds()), container+"-Max", tName))
+		testCases = append(testCases, CreatePerfTestCase(float32(stats.num), container+"-Num", tName))
+	}
+	if err := testgrid.CreateXMLOutput(testCases, tName); err != nil {
 		t.Fatalf("Error creating testgrid output: %v", err)
 	}
 }
