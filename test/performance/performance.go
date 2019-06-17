@@ -162,6 +162,10 @@ func AddTrace(logf logging.FormatLogger, tName string, traceID string) {
 	}
 }
 
+func GetTrace(traceID string) ([]*zipkin.Span, error) {
+	return zipkin.ZipkinTrace(traceID)
+}
+
 // createDir creates dir if does not exist.
 func createDir(dirPath string) error {
 	if _, err := os.Stat(dirPath); os.IsNotExist(err) {

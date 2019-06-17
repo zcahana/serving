@@ -143,3 +143,28 @@ func JSONTrace(traceID string) (string, error) {
 
 	return prettyJSON.String(), nil
 }
+
+func ZipkinTrace(traceID string) ([]*Span, error) {
+	// Check if zipkin port forwarding is setup correctly
+	if err := CheckZipkinPortAvailability(); err == nil {
+		return nil, err
+	}
+
+	resp, err := http.Get(ZipkinTraceEndpoint + traceID)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	trace, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	spans := make([]*Span, 0)
+	if err := json.Unmarshal(trace, &spans); err != nil {
+		return nil, err
+	}
+
+	return spans, nil
+}
