@@ -239,7 +239,7 @@ func getMultiRunStats(runStats []*stats) *stats {
 	min := runStats[0].min
 	max := runStats[0].max
 	avg := runStats[0].avg
-	num := 0
+	num := runStats[0].num
 
 	for _, stat := range runStats[1:] {
 		if stat.min < min {
