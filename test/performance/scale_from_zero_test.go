@@ -250,6 +250,7 @@ func getMultiRunStats(runStats []*stats) *stats {
 		avg += stat.avg
 		num += stat.num
 	}
+
 	return &stats{
 		avg: time.Duration(int64(avg) / int64(len(runStats))),
 		min: min,
@@ -262,7 +263,7 @@ func testScaleFromZero(t *testing.T, count, numRuns int) {
 	runStats := make([]*stats, numRuns)
 	runTraces := make([][][]*zipkin.Span, numRuns)
 
-	tName := fmt.Sprintf("TestScaleFromZero%02d", count)
+	tName := t.Name()
 	for i := 0; i < numRuns; i++ {
 		durs, traces, err := parallelScaleFromZero(t, count)
 		if err != nil {
@@ -305,10 +306,14 @@ func TestScaleFromZero50(t *testing.T) {
 	testScaleFromZero(t, 50 /* parallelism */, 5 /* runs */)
 }
 
-func TestScaleFromZero0(t *testing.T) {
+func TestScaleFromZero1x1(t *testing.T) {
 	testScaleFromZero(t, 1 /* parallelism */, 1 /* runs */)
 }
 
-func TestScaleFromZero10(t *testing.T) {
+func TestScaleFromZero10x10(t *testing.T) {
 	testScaleFromZero(t, 10 /* parallelism */, 10/* runs */)
+}
+
+func TestScaleFromZero1x2(t *testing.T) {
+	testScaleFromZero(t, 1 /* parallelism */, 2 /* runs */)
 }
