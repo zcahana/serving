@@ -21,6 +21,7 @@ package performance
 import (
 	"errors"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,7 @@ import (
 	"golang.org/x/sync/errgroup"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	pkgTest "github.com/knative/pkg/test"
 	"github.com/knative/pkg/test/zipkin"
@@ -67,6 +69,26 @@ func runScaleFromZero(idx int, t *testing.T, clients *test.Clients, ro *test.Res
 		t.Log(m)
 		return 0, nil, errors.New(m)
 	}
+
+	t.Logf("%02d: waiting for deployment pods to begin terminating.", idx)
+	wait.PollImmediate(1*time.Second, 10*time.Minute, func() (bool, error) {
+		podClient := clients.KubeClient.Kube.CoreV1().Pods(test.ServingNamespace)
+		podList, err := podClient.List(metav1.ListOptions{
+			LabelSelector: "app=" + ro.Revision.Name,
+		})
+
+		if err != nil {
+			return false, err
+		}
+
+		for _, pod := range podList.Items {
+			if pod.DeletionTimestamp == nil {
+				return false, nil
+			}
+		}
+
+		return true, nil
+	})
 
 	start := time.Now()
 	t.Logf("%02d: waiting for endpoint to serve request", idx)
@@ -311,7 +333,7 @@ func TestScaleFromZero1x1(t *testing.T) {
 }
 
 func TestScaleFromZero10x10(t *testing.T) {
-	testScaleFromZero(t, 10 /* parallelism */, 10/* runs */)
+	testScaleFromZero(t, 10 /* parallelism */, 10 /* runs */)
 }
 
 func TestScaleFromZero1x2(t *testing.T) {
