@@ -317,3 +317,7 @@ func TestScaleFromZero10x10(t *testing.T) {
 func TestScaleFromZero1x2(t *testing.T) {
 	testScaleFromZero(t, 1 /* parallelism */, 2 /* runs */)
 }
+
+func TestScaleFromZero5x1(t *testing.T) {
+	testScaleFromZero(t, 5 /* parallelism */, 1 /* runs */)
+}
