@@ -48,7 +48,7 @@ func TracePodStartup(ctx context.Context, stopCh <-chan struct{}, eventCh <-chan
 	for {
 		select {
 		case ev := <-eventCh:
-			if pod, ok := ev.Object.(*corev1.Pod); ok {
+			if pod, ok := ev.Object.(*corev1.Pod); ok && pod.DeletionTimestamp == nil {
 				if podState == "" {
 					podCreatingCtx, podCreating = trace.StartSpan(ctx, "pod_creating")
 					podState = csWaiting
