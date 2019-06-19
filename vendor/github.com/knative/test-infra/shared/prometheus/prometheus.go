@@ -20,7 +20,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/knative/pkg/test/logging"
@@ -36,14 +35,6 @@ const (
 	appLabel       = "prometheus"
 )
 
-var (
-	// sync.Once variable to ensure we execute zipkin setup only once.
-	setupOnce sync.Once
-
-	// sync.Once variable to ensure we execute zipkin cleanup only if zipkin is setup and it is executed only once.
-	teardownOnce sync.Once
-)
-
 // PromProxy defines a proxy to the prometheus server
 type PromProxy struct {
 	Namespace string
@@ -52,34 +43,30 @@ type PromProxy struct {
 
 // Setup performs a port forwarding for app prometheus-test in given namespace
 func (p *PromProxy) Setup(kubeClientset *kubernetes.Clientset, logf logging.FormatLogger) {
-	setupOnce.Do(func() {
-		if err := monitoring.CheckPortAvailability(prometheusPort); err != nil {
-			logf("Prometheus port not available: %v", err)
-			return
-		}
+	if err := monitoring.CheckPortAvailability(prometheusPort); err != nil {
+		logf("Prometheus port not available: %v", err)
+		return
+	}
 
-		promPods, err := monitoring.GetPods(kubeClientset, appLabel, p.Namespace)
-		if err != nil {
-			logf("Error retrieving prometheus pod details: %v", err)
-			return
-		}
+	promPods, err := monitoring.GetPods(kubeClientset, appLabel, p.Namespace)
+	if err != nil {
+		logf("Error retrieving prometheus pod details: %v", err)
+		return
+	}
 
-		p.processID, err = monitoring.PortForward(logf, promPods, prometheusPort, prometheusPort, p.Namespace)
-		if err != nil {
-			logf("Error starting kubectl port-forward command: %v", err)
-			return
-		}
-	})
+	p.processID, err = monitoring.PortForward(logf, promPods, prometheusPort, prometheusPort, p.Namespace)
+	if err != nil {
+		logf("Error starting kubectl port-forward command: %v", err)
+		return
+	}
 }
 
 // Teardown will kill the port forwarding process if running.
 func (p *PromProxy) Teardown(logf logging.FormatLogger) {
-	teardownOnce.Do(func() {
-		if err := monitoring.Cleanup(p.processID); err != nil {
-			logf("Encountered error killing port-forward process: %v", err)
-			return
-		}
-	})
+	if err := monitoring.Cleanup(p.processID); err != nil {
+		logf("Encountered error killing port-forward process: %v", err)
+		return
+	}
 }
 
 // PromAPI gets a handle to the prometheus API
