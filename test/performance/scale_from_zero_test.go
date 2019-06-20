@@ -305,11 +305,24 @@ func testScaleFromZero(t *testing.T, count, numRuns int) {
 		CreatePerfTestCase(float32(stats.max.Seconds()), "Max", tName),
 		CreatePerfTestCase(float32(stats.num), "Num", tName)}
 
+	t.Logf("Total: avg=%.2f, min=%.2f, max=%.2f, num=%d",
+		float32(stats.avg.Seconds()),
+		float32(stats.min.Seconds()),
+		float32(stats.max.Seconds()),
+		stats.num)
+
 	for container, stats := range containerStats {
 		testCases = append(testCases, CreatePerfTestCase(float32(stats.avg.Seconds()), container+"-Average", tName))
 		testCases = append(testCases, CreatePerfTestCase(float32(stats.min.Seconds()), container+"-Min", tName))
 		testCases = append(testCases, CreatePerfTestCase(float32(stats.max.Seconds()), container+"-Max", tName))
 		testCases = append(testCases, CreatePerfTestCase(float32(stats.num), container+"-Num", tName))
+
+		t.Logf("%s: avg=%.2f, min=%.2f, max=%.2f, num=%d",
+			container,
+			float32(stats.avg.Seconds()),
+			float32(stats.min.Seconds()),
+			float32(stats.max.Seconds()),
+			stats.num)
 	}
 	if err := testgrid.CreateXMLOutput(testCases, tName); err != nil {
 		t.Fatalf("Error creating testgrid output: %v", err)
